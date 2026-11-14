@@ -1,12 +1,20 @@
 #!/bin/sh
 # Called by arthur-performance under its control lock. Status is read-only.
+# Shared RPS machinery for USB tethering and, with a fixed port argument, Arthur wired ports.
 # RPS distributes receive processing; it never bypasses proxy/firewall rules.
 export LC_ALL=C
 NET="${ARTHUR_SYSFS_ROOT:-/sys/class/net}"
 PROC="${ARTHUR_PROC_ROOT:-/proc}"
 MODULES="${ARTHUR_MODULE_ROOT:-/sys/module}"
 ECM="${ARTHUR_ECM_ROOT:-/sys/kernel/debug/ecm}"
-STATE="${ARTHUR_PERF_STATE:-/var/run/arthur-performance}/usb-rps"
+PERF_STATE="${ARTHUR_PERF_STATE:-/var/run/arthur-performance}"
+STATE="$PERF_STATE/usb-rps"
+PORT="${2:-}"
+case "$PORT" in
+    '') ;;
+    wan|lan1|lan2|lan3) STATE="$PERF_STATE/wired-rps/$PORT" ;;
+    *) exit 1 ;;
+esac
 
 valid_name() {
     case "$1" in ''|.|..|*[!a-zA-Z0-9_.:-]*) return 1 ;; esac
@@ -35,7 +43,39 @@ is_tether() {
     case "${driver##*/}" in cdc_ether|rndis_host|cdc_ncm) return 0 ;; *) return 1 ;; esac
 }
 
+select_wired_policy() {
+    local entry
+    enabled=false
+    device=''
+    mask=''
+    policy=off
+    [ "$(uci -q get arthur.performance.wired_rps)" != 0 ] || return
+    enabled=true
+    policy=waiting_proxy
+    [ "$(uci -q get openclash.config.enable)" = 1 ] || pidof clash clash_meta mihomo >/dev/null 2>&1 || return
+    policy=global_steering
+    case "$(uci -q get network.globals.packet_steering)" in ''|0) ;; *) return ;; esac
+    policy=nss
+    if [ -d "$MODULES/ecm" ]; then
+        [ "$(cat "$ECM/front_end_ipv4_stop" 2>/dev/null):$(cat "$ECM/front_end_ipv6_stop" 2>/dev/null)" = 1:1 ] || return
+    fi
+    policy=unsupported
+    device="$PORT"
+    # The Arthur has four cores. Include only online CPUs and keep USB's tested mask independent.
+    mask="$(awk '/^cpu[0-3] / {m+=2^(substr($1,4)+0)} END {printf "%x",m+0}' "$PROC/stat" 2>/dev/null)"
+    case "$mask" in ''|0|1|2|4|8) return ;; esac
+    for entry in "$NET/$device"/queues/rx-*/rps_cpus; do
+        [ -f "$entry" ] || continue
+        policy=ready
+        break
+    done
+}
+
 select_policy() {
+    if [ -n "$PORT" ]; then
+        select_wired_policy
+        return
+    fi
     local entry candidate
     enabled=true
     [ "$(uci -q get arthur.performance.usb_rps)" != 0 ] || enabled=false

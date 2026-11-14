@@ -45,6 +45,7 @@ return view.extend({
             nss_unload_failed: _('ECM 未能退出，已取消软件分载，避免两个模式叠加'),
             software_module_unavailable: _('软件分载内核模块不可用，已取消启用'),
             software_apply_failed: _('软件分载规则应用失败，已尝试关闭并恢复普通转发'),
+            wired_rps_restore_failed: _('有线网口多核设置未能恢复，已取消启用 NSS'),
             usb_rps_restore_failed: _('USB 多核设置未能恢复，已取消启用 NSS，请检查接口状态'),
             tcp_algorithm_unavailable: _('选定的 TCP 拥塞算法不可用，当前算法保持原值')
         };
@@ -69,12 +70,34 @@ return view.extend({
             rpsText += ' · ' + rps.queues.map(function(q) { return q.queue + '=' + q.mask; }).join(', ');
         if (rps.state === 'active' && data.proxy_guard)
             rpsText += _(' · OpenClash 运行时保留');
+        var wiredStatus = data.wired_rps || {};
+        var wired = Object.keys(wiredStatus).map(function(port) {
+            var info = wiredStatus[port];
+            if (info.state === 'active') return port + ' (' + info.target_mask + ')';
+            return null;
+        }).filter(Boolean);
+        var states = Object.keys(wiredStatus).map(function(port) { return wiredStatus[port].state; });
+        var wiredText = _('待命：OpenClash 启用时使用');
+        if (states.indexOf('error') !== -1)
+            wiredText = _('部分网口设置或恢复失败，请检查运行状态');
+        else if (states.indexOf('global_steering') !== -1)
+            wiredText = _('由接口全局软件包分载接管');
+        else if (states.indexOf('nss') !== -1)
+            wiredText = _('等待 NSS 暂停');
+        else if (states.length && states.every(function(state) { return state === 'off'; }))
+            wiredText = _('已关闭');
+        else if (data.proxy_guard)
+            wiredText = _('未生效：等待可用的网口接收队列');
+        if (wired.length)
+            wiredText = _('已启用') + ' · ' + wired.join(', ') +
+                (states.indexOf('error') !== -1 ? ' · ' + wiredText : '');
         var fields = [
             [_('TCP 拥塞控制 / 默认队列'), (data.tcp_cc || '—') + ' / ' + (data.default_qdisc || '—')],
             [_('NSS 驱动'), data.nss_driver ? _('已加载') : _('未加载')],
             [_('转发加速状态'), nss],
             [_('软件流量分载规则'), data.software_flowtable ? _('存在；不等于测速连接已命中') : _('未启用')],
             [_('USB 多核分流（RPS）'), rpsText],
+            [_('OpenClash 有线多核分流（RPS）'), wiredText],
             [_('NSS 加速连接数（全机）'), 'IPv4: ' + count4 + ' · IPv6: ' + count6],
             [_('无线 NSS 驱动'), data.wifi_nss ? _('已启用，独立于路由转发开关') : _('未启用或无法读取')],
             [_('ZRAM 压缩交换'), zram],
@@ -148,6 +171,10 @@ return view.extend({
         o.default = '1';
         o.rmempty = false;
         o.description = _('默认开启。识别 USB 随身 WiFi 接口，使用本机在线的 CPU0/1/3（四核亚瑟掩码 b），重启或 USB 重连后自动恢复，OpenClash 运行时继续保留。关闭时恢复接管前的设置；NSS 转发运行或全局软件包分载接管时暂不叠加。不保证固定提速，也不替代代理加解密。');
+        o = s.option(form.Flag, 'wired_rps', _('OpenClash 有线多核分流（RPS）'));
+        o.default = '1';
+        o.rmempty = false;
+        o.description = _('默认开启。OpenClash 使用时，为亚瑟的 WAN、LAN1～LAN3 分散收包处理；退出代理后恢复原设置。不会跳过分流规则。实际提速取决于负载；有波动时可关闭此项对比。');
         o = s.option(form.Flag, 'zram_enabled', _('开启 ZRAM 压缩交换'));
         o.default = '1';
         o.rmempty = false;

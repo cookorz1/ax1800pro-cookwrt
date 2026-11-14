@@ -9,12 +9,14 @@
 USB 随身 WiFi 上网 · 双频 Wi-Fi · 中文 Argon · iStore · OpenClash
 
 [![构建状态](https://github.com/cookorz1/ax1800pro-cookwrt/actions/workflows/build.yml/badge.svg)](https://github.com/cookorz1/ax1800pro-cookwrt/actions/workflows/build.yml)
-[![源码版本](https://img.shields.io/badge/source-1.5.0--rc.6-blue)](VERSION)
+[![源码版本](https://img.shields.io/badge/source-1.5.0--rc.7-blue)](VERSION)
 [![已发布候选版](https://img.shields.io/badge/release-1.5.0--rc.6-orange)](https://github.com/cookorz1/ax1800pro-cookwrt/releases/tag/v1.5.0-rc.6)
 
 [固件下载](https://github.com/cookorz1/ax1800pro-cookwrt/releases) · [更新日志](CHANGELOG.md) · [源码与构建](#源码与构建) · [使用与排查](docs/USAGE.md)
 
 </div>
+
+> **v1.5.0-rc.7** 待构建验证：移除预装 DDNS，新增 OpenClash 有线多核分流和 IPv6 快捷开关。下方下载指向已发布版本。
 
 > **v1.5.0-rc.6 已发布**：新增自定义主机名与 Logo 上传。进入“系统 → 主机名与 Logo”即可设置；[下载最新候选版](https://github.com/cookorz1/ax1800pro-cookwrt/releases/tag/v1.5.0-rc.6)。
 
@@ -98,7 +100,7 @@ rc.5 已收到 USB 上网经 Wi-Fi 转发的测速反馈，三次完整采样的
 | 网络质量检测 | 手动检测 WAN / USB 的 IPv4、延迟、丢包和 HTTPS 可达性 |
 | 转发与多核设置 | NSS、软件流量分载、USB RPS，以及 OpenClash / SQM 兼容保护 |
 | 内存管理 | 128 MiB ZRAM、可用内存、代理内存参考值与手动缓存回收 |
-| 常用驱动与工具 | USB 网卡、存储、常见文件系统、QMI / MBIM、DDNS、WOL、流量统计、TTYD、SFTP、iperf3、ethtool 等 |
+| 常用驱动与工具 | USB 网卡、存储、常见文件系统、QMI / MBIM、WOL、流量统计、TTYD、SFTP、iperf3、ethtool 等 |
 
 USB 网卡报告速率、USB 总线速率和蜂窝网络测速分别展示。网络质量检测目前不读取 RSRP / SINR 或光猫光功率；USB 上网开关控制网络接入，关闭后随身 WiFi 仍会供电。
 

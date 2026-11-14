@@ -1,0 +1,149 @@
+#!/bin/sh
+# Keep loopback IPv6 for local services. Do not rewrite WAN, LAN, DHCP or proxy configuration.
+# All writes are serialized by arthur-performance. State records kernel values, not UCI settings.
+CONF="${ARTHUR_PROC_ROOT:-/proc}/sys/net/ipv6/conf"
+NET="${ARTHUR_SYSFS_ROOT:-/sys/class/net}"
+STATE="${ARTHUR_PERF_STATE:-/var/run/arthur-performance}/ipv6"
+
+DISABLED="${ARTHUR_IPV6_FLAG:-/etc/arthur/ipv6-disabled}"
+
+desired() {
+    [ -f "$DISABLED" ]
+}
+
+managed_nodes() {
+    local node dev
+    for node in "$CONF"/*/disable_ipv6; do
+        [ -f "$node" ] || continue
+        dev="${node%/disable_ipv6}"
+        dev="${dev##*/}"
+        case "$dev" in all|default|lo|''|*[!a-zA-Z0-9_.:-]*) continue ;; esac
+        printf '%s\n' "$dev"
+    done
+}
+
+apply_disabled() {
+    local dev node current index old_index original failed=0
+    node="$CONF/default/disable_ipv6"
+    current="$(cat "$node" 2>/dev/null)"
+    case "$current" in 0|1) ;; *) return 1 ;; esac
+    mkdir -p "$STATE" || return 1
+    if [ ! -f "$STATE/default" ]; then
+        printf '%s\n' "$current" >"$STATE/default" || return 1
+    fi
+    # Snapshot existing devices before setting the inheritance default.
+    for dev in $(managed_nodes); do
+        node="$CONF/$dev/disable_ipv6"
+        index="$(cat "$NET/$dev/ifindex" 2>/dev/null)"
+        case "$index" in ''|*[!0-9]*) continue ;; esac
+        current="$(cat "$node" 2>/dev/null)"
+        case "$current" in 0|1) ;; *) continue ;; esac
+        old_index=''; original=''
+        if [ -r "$STATE/dev-$dev" ]; then
+            read -r old_index original <"$STATE/dev-$dev"
+        fi
+        if [ "$old_index" != "$index" ]; then
+            # A hotplugged device may have inherited the disabled default.
+            if [ -f "$STATE/applied" ] && [ "$current" = 1 ]; then
+                current="$(cat "$STATE/default")"
+            fi
+            printf '%s %s\n' "$index" "$current" >"$STATE/dev-$dev" || return 1
+        fi
+    done
+    if [ "$(cat "$CONF/default/disable_ipv6" 2>/dev/null)" != 1 ]; then
+        printf '1\n' >"$CONF/default/disable_ipv6" || return 1
+    fi
+    : >"$STATE/applied" || return 1
+    for dev in $(managed_nodes); do
+        node="$CONF/$dev/disable_ipv6"
+        index="$(cat "$NET/$dev/ifindex" 2>/dev/null)"
+        old_index=''; original=''
+        if [ -r "$STATE/dev-$dev" ]; then read -r old_index original <"$STATE/dev-$dev"; fi
+        [ -n "$index" ] && [ "$index" = "$old_index" ] || { failed=1; continue; }
+        [ "$(cat "$node" 2>/dev/null)" = 1 ] || { printf '1\n' >"$node" 2>/dev/null || failed=1; }
+    done
+    [ "$failed" = 0 ]
+}
+
+restore() {
+    local dev node current index old_index original default item failed=0
+    [ -f "$STATE/default" ] || return 0
+    default="$(cat "$STATE/default" 2>/dev/null)"
+    case "$default" in 0|1) ;; *) return 1 ;; esac
+    printf '%s\n' "$default" >"$CONF/default/disable_ipv6" || return 1
+    for dev in $(managed_nodes); do
+        node="$CONF/$dev/disable_ipv6"
+        current="$(cat "$node" 2>/dev/null)"
+        [ "$current" = 1 ] || continue
+        index="$(cat "$NET/$dev/ifindex" 2>/dev/null)"
+        old_index=''; original=''
+        item="$STATE/dev-$dev"
+        if [ -r "$item" ]; then read -r old_index original <"$item"; fi
+        if [ -z "$index" ] || [ "$old_index" != "$index" ]; then
+            [ -f "$STATE/applied" ] || continue
+            original="$default"
+        fi
+        case "$original" in 0|1) ;; *) failed=1; continue ;; esac
+        [ "$original" = 1 ] || { printf '0\n' >"$node" 2>/dev/null || failed=1; }
+    done
+    [ "$failed" = 0 ] || return 1
+    rm -f "$STATE"/dev-* "$STATE/default" "$STATE/applied"
+    rmdir "$STATE" 2>/dev/null || :
+}
+
+status() {
+    local want=false active=false available=false dev pending=0
+    desired && want=true
+    if [ -r "$CONF/default/disable_ipv6" ]; then
+        available=true
+        if [ "$(cat "$CONF/default/disable_ipv6" 2>/dev/null)" = 1 ]; then
+            for dev in $(managed_nodes); do
+                [ "$(cat "$CONF/$dev/disable_ipv6" 2>/dev/null)" = 1 ] || pending=1
+            done
+            [ "$pending" = 1 ] || active=true
+        fi
+    fi
+    printf '{"available":%s,"requested_disabled":%s,"disabled":%s}' "$available" "$want" "$active"
+}
+
+fail() { printf '{"ok":false,"error":"%s"}\n' "$1"; exit 0; }
+
+set_mode() {
+    local target="$1" previous=0
+    case "$target" in 0|1) ;; *) fail invalid ;; esac
+    desired && previous=1
+    [ -w "$CONF/default/disable_ipv6" ] || fail unavailable
+    if [ "$target" = 1 ]; then
+        if ! apply_disabled; then
+            [ "$previous" = 1 ] || restore
+            fail apply_failed
+        fi
+    else
+        restore || fail apply_failed
+    fi
+    if [ "$target" != "$previous" ]; then
+        if ! save_mode "$target"; then
+            if [ "$previous" = 1 ]; then apply_disabled; else restore; fi
+            fail save_failed
+        fi
+    fi
+    printf '{"ok":true,"ipv6":%s}\n' "$(status)"
+}
+
+save_mode() {
+    if [ "$1" = 1 ]; then
+        mkdir -p "${DISABLED%/*}" && (umask 077; : >"$DISABLED")
+    else
+        rm -f "$DISABLED"
+    fi
+}
+
+case "$1" in
+    status) status ;;
+    reconcile)
+        if desired; then apply_disabled
+        elif [ -f "$STATE/default" ]; then restore
+        fi ;;
+    set) set_mode "$2" ;;
+    *) exit 1 ;;
+esac

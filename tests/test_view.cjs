@@ -8,6 +8,9 @@ let flags = [];
 let polling = [];
 let diagnoseCalls = 0;
 let diagnoseResponse;
+let ipv6Calls = [];
+let ipv6Response;
+const browserLocation = {hostname: '192.168.10.1'};
 const E = (tag, attrs, children) => ({tag, attrs: attrs || {}, children: children || []});
 function MapStub(name) { this.config = name; }
 MapStub.prototype.section = function() {
@@ -15,14 +18,15 @@ MapStub.prototype.section = function() {
 };
 MapStub.prototype.render = async function() { return E('form', {config: this.config}); };
 const context = {
-    view: {extend: value => value}, rpc: {declare: spec => async () => {
+    view: {extend: value => value}, rpc: {declare: spec => async (...args) => {
         if (spec.method === 'diagnose') { diagnoseCalls++; return diagnoseResponse; }
+        if (spec.method === 'ipv6_set') { ipv6Calls.push(args[0]); return ipv6Response; }
         return {ports: []};
     }},
     form: {Map: MapStub, NamedSection: {}, Flag: {}}, uci: {load: async () => true},
     poll: {add: (fn, seconds) => polling.push({fn, seconds})},
     dom: {content: (node, children) => { node.children = children; }},
-    L: {bind: (fn, owner) => fn.bind(owner)}, E, _: text => text, Promise
+    L: {bind: (fn, owner) => fn.bind(owner)}, window: {location: browserLocation}, E, _: text => text, Promise
 };
 const view = vm.runInNewContext('(function(){\n' + code + '\n})()', context);
 const data = {ports: [
@@ -38,10 +42,26 @@ function allText(node) {
     return node ? allText(node.children) : '';
 }
 (async () => {
-    const rendered = await view.render([true, data]);
+    const rendered = await view.render([true, data, {available: true, requested_disabled: false, disabled: false}]);
     const text = allText(rendered);
     for (const expected of ['WAN', 'LAN1', 'LAN2', 'LAN3', 'USB', '1000 Mbps', '100 Mbps', '480 Mbps', '5000 Mbps', '未连接', '无法读取'])
         assert.ok(text.includes(expected), expected);
+    assert.ok(allText(view.ipv6Button).includes('关闭 IPv6'));
+    browserLocation.hostname = '[fd00::1]';
+    await view.changeIPv6();
+    assert.equal(ipv6Calls.length, 0);
+    browserLocation.hostname = '192.168.10.1';
+    let apply;
+    ipv6Response = new Promise(resolve => { apply = resolve; });
+    const applying = view.changeIPv6();
+    await view.changeIPv6();
+    assert.deepEqual(ipv6Calls, [true]);
+    apply({ok: true, ipv6: {available: true, requested_disabled: true, disabled: true}});
+    await applying;
+    assert.ok(allText(view.ipv6Button).includes('恢复 IPv6'));
+    ipv6Response = {ok: true, ipv6: {available: true, requested_disabled: false, disabled: false}};
+    await view.changeIPv6();
+    assert.deepEqual(ipv6Calls, [true, false]);
     assert.equal(flags.length, 1);
     assert.equal(flags[0].name, 'enabled');
     assert.equal(flags[0].rmempty, false);

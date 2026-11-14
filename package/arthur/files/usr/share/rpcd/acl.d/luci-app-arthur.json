@@ -8,7 +8,8 @@
           "diagnose",
           "performance",
           "dashboard",
-          "identity"
+          "identity",
+          "ipv6_status"
         ],
         "system": [
           "board",
@@ -26,7 +27,8 @@
       "ubus": {
         "arthur": [
           "release_memory",
-          "save_identity"
+          "save_identity",
+          "ipv6_set"
         ]
       }
     }

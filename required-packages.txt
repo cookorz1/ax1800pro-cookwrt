@@ -37,7 +37,6 @@ kmod-fs-ntfs3
 kmod-fs-vfat
 kmod-usb-storage-uas
 openssh-sftp-server
-luci-app-ddns
 luci-app-wol
 luci-app-upnp
 luci-app-nlbwmon

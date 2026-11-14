@@ -153,6 +153,43 @@ class PerformanceTests(unittest.TestCase):
             node.write_text(initial + '\n')
         return interface / 'queues/rx-0/rps_cpus'
 
+    def test_wired_rps_works_with_openclash_and_restores_without_bypassing_guard(self):
+        self.put('net/wan/ifindex', '9\n')
+        self.put('net/lan1/ifindex', '10\n')
+        self.put('net/tun0/ifindex', '11\n')
+        for port in ('wan', 'lan1', 'tun0'):
+            self.put(f'net/{port}/queues/rx-0/rps_cpus', '2\n')
+        def masks():
+            return [(self.net / p / 'queues/rx-0/rps_cpus').read_text().strip()
+                    for p in ('wan', 'lan1', 'tun0')]
+        self.software_mode()
+        self.loaded_ecm()
+        self.put('flowtable', 'software')
+        self.put('pids.json', '{"mihomo": 9}')
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['f', 'f', '2'])
+        status = json.loads(self.run_action('status'))
+        self.assertEqual(status['wired_rps']['wan']['state'], 'active')
+        self.assertTrue(status['proxy_guard'])
+        self.assertFalse(status['software_flowtable'])
+        self.assertEqual((self.ecm / 'front_end_ipv4_stop').read_text().strip(), '1')
+        self.update({'network.globals.packet_steering': '1'})
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['2', '2', '2'])
+        self.update({'network.globals.packet_steering': '0'})
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['f', 'f', '2'])
+        self.update({'arthur.performance.wired_rps': '0'})
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['2', '2', '2'])
+        self.update({'arthur.performance.wired_rps': '1'})
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['f', 'f', '2'])
+        self.put('pids.json', '{}')
+        (self.base / 'unload-allowed').touch()
+        self.run_action('reconcile')
+        self.assertEqual(masks(), ['2', '2', '2'])
+
     def test_usb_rps_defaults_on_and_follows_configured_device_not_name_eth0(self):
         first = self.usb_device('usb0', queues=2)
         other = self.usb_device('eth0', index='9')

@@ -7,11 +7,13 @@
 'require dom';
 
 var callStatus = rpc.declare({object: 'arthur', method: 'status', expect: {'': {}}});
+var callIPv6Status = rpc.declare({object: 'arthur', method: 'ipv6_status', expect: {'': {}}});
+var callIPv6Set = rpc.declare({object: 'arthur', method: 'ipv6_set', params: ['disabled'], expect: {'': {}}});
 var callDiagnose = rpc.declare({object: 'arthur', method: 'diagnose', expect: {'': {}}});
 
 return view.extend({
     load: function() {
-        return Promise.all([uci.load('arthur'), callStatus()]);
+        return Promise.all([uci.load('arthur'), callStatus(), callIPv6Status().catch(function() { return {}; })]);
     },
 
     updateStatus: function(data) {
@@ -40,6 +42,51 @@ return view.extend({
             _('USB 总线连接速率：') + (data.usb_present ? busSpeed : _('未连接')) +
             _('。USB 行的链路速率由网卡驱动报告；两者均不代表蜂窝网络或宽带测速。')
         ]);
+    },
+
+    updateIPv6: function(data) {
+        this.ipv6 = data || {};
+        var enabled = !!this.ipv6.available;
+        var requested = !!this.ipv6.requested_disabled;
+        this.ipv6Button.disabled = !enabled || !!this.changingIPv6;
+        dom.content(this.ipv6Button, [requested ? _('恢复 IPv6') : _('关闭 IPv6')]);
+        dom.content(this.ipv6Status, [!enabled ? _('无法读取 IPv6 状态') :
+            (requested ? (this.ipv6.disabled ? _('路由器 IPv6 已关闭') : _('关闭设置已保存，等待接口应用')) :
+            (this.ipv6.disabled ? _('IPv6 已由其他设置关闭') : _('未使用快捷开关关闭 IPv6')))]);
+    },
+
+    changeIPv6: function() {
+        if (this.changingIPv6 || !this.ipv6.available)
+            return Promise.resolve();
+        var target = !this.ipv6.requested_disabled;
+        // Keep an IPv6-authenticated browser from losing access during the change.
+        if (target && !/^(?:\d{1,3}\.){3}\d{1,3}$/.test(window.location.hostname)) {
+            dom.content(this.ipv6Message, [_('请先通过路由器的 IPv4 管理地址登录，再关闭 IPv6。')]);
+            return Promise.resolve();
+        }
+        this.ipv6Generation = (this.ipv6Generation || 0) + 1;
+        this.changingIPv6 = true;
+        this.ipv6Button.disabled = true;
+        dom.content(this.ipv6Message, [_('正在应用设置……')]);
+        return callIPv6Set(target).then(L.bind(function(result) {
+            if (!result.ok) {
+                var errors = {
+                    busy: _('系统正在应用网络设置，请稍后重试。'),
+                    forwarding_busy: _('无法清退现有转发加速规则，未修改 IPv6。'),
+                    save_failed: _('设置保存失败，请重试。'),
+                    unavailable: _('当前系统无法切换 IPv6。')
+                };
+                dom.content(this.ipv6Message, [errors[result.error] || _('未能完整应用设置，请查看下方状态。')]);
+                return callIPv6Status().then(L.bind(this.updateIPv6, this));
+            }
+            this.updateIPv6(result.ipv6);
+            dom.content(this.ipv6Message, [target ? _('设置已保存。') : _('已恢复本开关接管前的设置，地址和前缀可能需要重新获取。')]);
+        }, this)).catch(L.bind(function() {
+            dom.content(this.ipv6Message, [_('未收到结果。请通过 IPv4 重新打开页面查看状态。')]);
+        }, this)).finally(L.bind(function() {
+            this.changingIPv6 = false;
+            this.ipv6Button.disabled = !this.ipv6.available;
+        }, this));
     },
 
     showDiagnosis: function(data) {
@@ -98,6 +145,11 @@ return view.extend({
         o.default = '1';
         o.rmempty = false;
 
+        this.ipv6Status = E('p', {'role': 'status'});
+        this.ipv6Message = E('p', {'role': 'status'});
+        this.ipv6Button = E('button', {'class': 'cbi-button cbi-button-action', 'type': 'button',
+            'click': L.bind(this.changeIPv6, this)});
+        this.updateIPv6(data[2]);
         this.portRows = E('tbody');
         this.usbStatus = E('p', {'class': 'cbi-section-descr'});
         this.usbSpeed = E('p', {'class': 'cbi-section-descr'});
@@ -117,7 +169,11 @@ return view.extend({
         ]);
         this.updateStatus(data[1]);
         poll.add(L.bind(function() {
-            return callStatus().then(L.bind(this.updateStatus, this));
+            var generation = this.ipv6Generation || 0;
+            return Promise.all([callStatus().then(L.bind(this.updateStatus, this)),
+                callIPv6Status().then(L.bind(function(status) {
+                    if (!this.changingIPv6 && generation === (this.ipv6Generation || 0)) this.updateIPv6(status);
+                }, this)).catch(function() {})]);
         }, this), 3);
         return m.render().then(L.bind(function(formNode) {
             return E('div', {}, [
@@ -129,6 +185,11 @@ return view.extend({
                     E('h3', {}, [_('USB 上网状态')]),
                     this.usbStatus,
                     this.usbSpeed
+                ]),
+                E('div', {'class': 'cbi-section'}, [
+                    E('h3', {}, [_('IPv6 快捷设置')]),
+                    E('p', {'class': 'cbi-section-descr'}, [_('请通过 IPv4 管理地址操作。关闭会中断经本路由器的 IPv6 连接，保留 IPv4；局域网内设备之间的 IPv6 或其他路由器提供的 IPv6 不受此开关管理。')]),
+                    this.ipv6Status, this.ipv6Button, this.ipv6Message
                 ]),
                 E('div', {'class': 'cbi-section'}, [
                     E('h3', {}, [_('网络质量检测')]),

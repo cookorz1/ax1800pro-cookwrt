@@ -2,6 +2,13 @@
 
 项目维护与界面定制：**by-cookorz**。版本号遵循 `主版本.功能版本.修订版本`，测试候选版使用 `-rc.N`。
 
+## [1.5.0-rc.7] - 2026-11-15
+
+- 移除固件预装的 DDNS 服务、管理菜单及中文翻译；不删除保留配置升级时备份的旧 DDNS 配置。
+- 新增 OpenClash 有线多核分流：代理启用或核心仍在运行时，为亚瑟 WAN、LAN1～LAN3 的接收队列应用 RPS；保留原有 USB RPS、TCP BBR 设置和代理兼容保护。有线分流默认开启，可独立关闭，退出代理后恢复原掩码。
+- “网络 → 亚瑟网络面板”新增 **关闭 IPv6 / 恢复 IPv6** 按钮。设置立即应用并在重启后保留，保留本机 IPv6 回环与 IPv4；不改写 WAN、LAN、DHCP 或 OpenClash 配置。
+- OpenClash 工作时继续暂停 NSS 路由转发与全局软件流量卸载，避免绕过分流规则；实际吞吐仍待实机对比。
+
 ## [1.5.0-rc.6] - 2026-10-23
 
 **已构建并发布**：[Release](https://github.com/cookorz1/ax1800pro-cookwrt/releases/tag/v1.5.0-rc.6) · [Actions #18](https://github.com/cookorz1/ax1800pro-cookwrt/actions/runs/39922241603)。固件源码 `99e4a1f339c0d6a72d864754df81180a005a2410`；factory / sysupgrade 及校验文件已提供。保留候选版标记，实机验收待补充。
